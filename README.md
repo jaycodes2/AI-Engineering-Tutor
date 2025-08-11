@@ -120,4 +120,4 @@ npm run preview
 MIT (or update as needed)
 
 ## Author
-[Your Name]
+Jayanthan P
