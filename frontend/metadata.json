@@ -1,0 +1,6 @@
+{
+  "name": "AI Engineering Tutor",
+  "description": "An intelligent tutoring system to help engineering students learn difficult concepts using adaptive learning paths, multimodal content, and personalized feedback powered by AI.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
