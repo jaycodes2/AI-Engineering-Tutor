@@ -7,7 +7,7 @@ import PerformancePage from './components/PerformancePage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 import { Page, Difficulty, ENGINEERING_TOPICS } from './constants.js';
 import { sendMessageToTutor, generateTitleAndSuggestions, submitQuizAnswer, getUserStats } from './services/geminiService.js';
-import { loadSessions, saveSession, updateSessionMessages, updateSessionTitle, deleteSession } from './services/firestoreService.js';
+import { loadSessions, saveSession, updateSessionMessages, updateSessionTitle, deleteSession, savePerformanceData, loadPerformanceData } from './services/firestoreService.js';
 import { auth, logout } from './services/auth.js';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -44,6 +44,10 @@ const App = () => {
   // Save debounce ref
   const saveTimer = useRef(null);
   const uidRef = useRef(null); // always holds current Firebase UID
+  const perfDataRef = useRef(performanceData); // always holds latest performance data
+
+  // Keep perfDataRef in sync
+  useEffect(() => { perfDataRef.current = performanceData; }, [performanceData]);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -58,6 +62,14 @@ const App = () => {
   const loadUserSessions = async (uid) => {
     setSessionsLoading(true);
     try {
+      // Load performance data — update both state and ref
+      const savedPerf = await loadPerformanceData(uid);
+      if (savedPerf && Array.isArray(savedPerf) && savedPerf.length > 0) {
+        perfDataRef.current = savedPerf;
+        setPerformanceData(savedPerf);
+        console.log('Loaded performance data:', savedPerf.filter(d => d.correct > 0 || d.incorrect > 0));
+      }
+
       const sessions = await loadSessions(uid);
       if (sessions.length > 0) {
         setChatSessions(sessions);
@@ -120,8 +132,11 @@ const App = () => {
   };
 
   const handleResetPerformance = () => {
-    setPerformanceData(ENGINEERING_TOPICS.map(t => ({ name: t.split(' ')[0], correct: 0, incorrect: 0 })));
+    const fresh = ENGINEERING_TOPICS.map(t => ({ name: t.split(' ')[0], correct: 0, incorrect: 0 }));
+    perfDataRef.current = fresh;         // keep ref in sync
+    setPerformanceData(fresh);
     setBackendStats(null);
+    savePerformanceData(uidRef.current, fresh);
   };
 
   // ── Chat handlers ──────────────────────────────────────────────────────────
@@ -229,17 +244,16 @@ const App = () => {
   // ── Quiz handler ───────────────────────────────────────────────────────────
 
   const handleQuizAnswer = async (topic, quiz, selectedIndex, diff) => {
-    const isCorrect = selectedIndex === quiz.correctAnswerIndex;
-    setPerformanceData(prev => prev.map(d =>
-      d.name === topic.split(' ')[0]
-        ? { ...d, [isCorrect ? 'correct' : 'incorrect']: d[isCorrect ? 'correct' : 'incorrect'] + 1 }
-        : d
-    ));
-    handleUpdateUser({ streak: isCorrect ? (user.streak || 0) + 1 : 0 });
+    const uid = uidRef.current;
+
+    // Call Evaluator Agent — get rich feedback
+    let evaluation = null;
     try {
-      await submitQuizAnswer({
-        topic, difficulty: diff,
+      evaluation = await submitQuizAnswer({
+        topic,
+        difficulty: diff,
         question: quiz.question,
+        options: quiz.options || [],
         selected_index: selectedIndex,
         correct_index: quiz.correctAnswerIndex,
       });
@@ -247,7 +261,31 @@ const App = () => {
     } catch (e) {
       console.warn('Quiz submission failed:', e.message);
     }
-    return { isCorrect, explanation: quiz.explanation };
+
+    // Fall back to local check if API failed
+    const isCorrect = evaluation?.correct ?? (selectedIndex === quiz.correctAnswerIndex);
+
+    // Update performance data synchronously via ref — no race conditions
+    const updated = perfDataRef.current.map(d =>
+      d.name === topic.split(' ')[0]
+        ? { ...d, [isCorrect ? 'correct' : 'incorrect']: d[isCorrect ? 'correct' : 'incorrect'] + 1 }
+        : d
+    );
+    perfDataRef.current = updated;       // update ref immediately
+    setPerformanceData(updated);         // update UI
+    savePerformanceData(uid, updated);   // persist to Firestore
+
+    handleUpdateUser({ streak: isCorrect ? (user.streak || 0) + 1 : 0 });
+
+    // Return rich evaluation to FeedbackModal
+    return {
+      isCorrect,
+      explanation: evaluation?.explanation || quiz.explanation,
+      feedback: evaluation?.feedback || null,
+      misconception: evaluation?.misconception || null,
+      partialCredit: evaluation?.partial_credit ?? (isCorrect ? 1.0 : 0.0),
+      hintForNext: evaluation?.hint_for_next || null,
+    };
   };
 
   // ── Firebase auth listener ─────────────────────────────────────────────────
