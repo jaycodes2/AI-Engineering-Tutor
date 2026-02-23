@@ -35,7 +35,7 @@ const DashboardPage = ({ difficulty, setPerformanceData, onQuizAnswer, user, onU
     try {
       const data = await generateLessonAndQuiz(topic, difficulty);
       setCurrentLesson(data.lesson);
-      setCurrentQuiz(data.quiz);
+      setCurrentQuiz({ ...data.quiz, topic });  // attach topic for hint API
     } catch (e) {
       console.error('Failed to fetch lesson:', e);
     } finally {
@@ -120,7 +120,15 @@ const DashboardPage = ({ difficulty, setPerformanceData, onQuizAnswer, user, onU
           </div>
         )}
         {feedback && (
-          <FeedbackModal isCorrect={feedback.isCorrect} explanation={feedback.explanation} onNext={handleNext} />
+          <FeedbackModal
+            isCorrect={feedback.isCorrect}
+            explanation={feedback.explanation}
+            feedback={feedback.feedback}
+            misconception={feedback.misconception}
+            partialCredit={feedback.partialCredit}
+            hintForNext={feedback.hintForNext}
+            onNext={handleNext}
+          />
         )}
       </main>
     </>
