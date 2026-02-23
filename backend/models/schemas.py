@@ -73,15 +73,42 @@ class QuizSubmission(BaseModel):
     topic: str
     difficulty: Difficulty
     question: str
+    options: List[str]           # ← NEW: needed by Evaluator Agent
     selected_index: int
     correct_index: int
     time_taken_seconds: Optional[float] = None
 
 
-class QuizSubmissionResponse(BaseModel):
+class EvaluationResult(BaseModel):
     correct: bool
+    partial_credit: float = Field(ge=0.0, le=1.0)
+    misconception: Optional[str] = None
     explanation: str
     feedback: str
+    hint_for_next: str
+
+
+class QuizSubmissionResponse(BaseModel):
+    correct: bool
+    partial_credit: float
+    misconception: Optional[str]
+    explanation: str
+    feedback: str
+    hint_for_next: str
+
+
+class HintRequest(BaseModel):
+    topic: str
+    question: str
+    options: List[str]
+    correct_index: int
+    hint_level: int = Field(default=1, ge=1, le=4)
+
+
+class HintResponse(BaseModel):
+    hint: str
+    level: int
+    level_name: str
 
 
 class AnalyticsEvent(BaseModel):
