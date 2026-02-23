@@ -125,3 +125,39 @@ export const loadPerformanceData = async (uid) => {
   }
   return null;
 };
+
+// ── Activity Stats ────────────────────────────────────────────────────────────
+
+const activityRef = (uid) => doc(db, 'users', uid, 'meta', 'activity');
+
+export const saveActivityStats = async (uid, stats) => {
+  if (!uid) return;
+  try {
+    await setDoc(activityRef(uid), {
+      messages_sent: stats.messages_sent ?? 0,
+      lessons_viewed: stats.lessons_viewed ?? 0,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.error('saveActivityStats error:', e.message);
+  }
+};
+
+export const loadActivityStats = async (uid) => {
+  if (!uid) return { messages_sent: 0, lessons_viewed: 0 };
+  try {
+    const snap = await getDoc(activityRef(uid));
+    if (snap.exists()) {
+      const d = snap.data();
+      return {
+        messages_sent: Number(d.messages_sent) || 0,
+        lessons_viewed: Number(d.lessons_viewed) || 0,
+      };
+    }
+    // Doc doesn't exist yet — create it
+    await setDoc(activityRef(uid), { messages_sent: 0, lessons_viewed: 0, updatedAt: serverTimestamp() });
+  } catch (e) {
+    console.error('loadActivityStats error:', e.message);
+  }
+  return { messages_sent: 0, lessons_viewed: 0 };
+};

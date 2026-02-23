@@ -2,7 +2,7 @@ import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Difficulty } from '../constants.js';
 
-const StatCard = ({ label, value, color, icon }) => (
+const StatCard = ({ icon, label, value, color }) => (
   <div style={{
     background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
     borderRadius: 14, padding: '18px 20px',
@@ -38,12 +38,14 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
-const PerformancePage = ({ performanceData, backendStats, difficulty, setDifficulty, onReset, isLoading, theme }) => {
-  const totalCorrect = performanceData.reduce((s, d) => s + d.correct, 0);
+const PerformancePage = ({ performanceData, activityStats, difficulty, setDifficulty, onReset, isLoading, theme }) => {
+  // Compute all stats directly from performanceData — no backend dependency
+  const totalCorrect   = performanceData.reduce((s, d) => s + d.correct, 0);
   const totalIncorrect = performanceData.reduce((s, d) => s + d.incorrect, 0);
-  const total = totalCorrect + totalIncorrect;
-  const accuracy = total > 0 ? ((totalCorrect / total) * 100).toFixed(1) : '—';
-  const hasData = total > 0;
+  const totalQuizzes   = totalCorrect + totalIncorrect;
+  const accuracy       = totalQuizzes > 0 ? ((totalCorrect / totalQuizzes) * 100).toFixed(1) : '—';
+  const topicsStudied  = performanceData.filter(d => d.correct > 0 || d.incorrect > 0).map(d => d.name);
+  const hasData        = totalQuizzes > 0;
 
   return (
     <>
@@ -71,18 +73,16 @@ const PerformancePage = ({ performanceData, backendStats, difficulty, setDifficu
           <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', marginTop: 20 }} />
         </div>
 
-        {/* Stat cards — prefer backendStats if available */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 28 }}>
-          <StatCard icon="💬" label="Messages Sent"   value={backendStats?.total_messages   ?? '—'} color="#6366f1" />
-          <StatCard icon="📚" label="Lessons Viewed"  value={backendStats?.lessons_viewed   ?? '—'} color="#8b5cf6" />
-          <StatCard icon="🧩" label="Quizzes Taken"   value={backendStats?.quizzes_attempted ?? total} color="#f59e0b" />
-          <StatCard icon="🎯" label="Accuracy"
-            value={backendStats ? `${backendStats.accuracy_pct}%` : (total > 0 ? `${accuracy}%` : '—')}
-            color="#22c55e" />
+        {/* Stat cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 28 }}>
+          <StatCard icon="💬" label="Messages Sent"  value={activityStats?.messages_sent ?? 0}  color="#6366f1" />
+          <StatCard icon="📚" label="Lessons Viewed" value={activityStats?.lessons_viewed ?? 0} color="#8b5cf6" />
+          <StatCard icon="🧩" label="Quizzes Taken"  value={totalQuizzes}                        color="#f59e0b" />
+          <StatCard icon="🎯" label="Accuracy"       value={hasData ? `${accuracy}%` : '—'}     color="#22c55e" />
         </div>
 
         {/* Topics studied */}
-        {backendStats?.topics_studied?.length > 0 && (
+        {topicsStudied.length > 0 && (
           <div style={{
             background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
             borderRadius: 14, padding: '16px 20px', marginBottom: 24,
@@ -91,7 +91,7 @@ const PerformancePage = ({ performanceData, backendStats, difficulty, setDifficu
               Topics Studied
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {backendStats.topics_studied.map(topic => (
+              {topicsStudied.map(topic => (
                 <span key={topic} style={{
                   background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)',
                   color: '#818cf8', fontSize: 12, fontWeight: 500,
@@ -123,8 +123,8 @@ const PerformancePage = ({ performanceData, backendStats, difficulty, setDifficu
                   <XAxis dataKey="name" tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis allowDecimals={false} tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-                  <Bar dataKey="correct" name="Correct" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={28} />
-                  <Bar dataKey="incorrect" name="Incorrect" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                  <Bar dataKey="correct" name="Correct" fill="#22c55e" radius={[4,4,0,0]} maxBarSize={28} />
+                  <Bar dataKey="incorrect" name="Incorrect" fill="#ef4444" radius={[4,4,0,0]} maxBarSize={28} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -147,14 +147,11 @@ const PerformancePage = ({ performanceData, backendStats, difficulty, setDifficu
                     className="diff-btn"
                     style={{
                       padding: '9px 14px', borderRadius: 10,
-                      border: difficulty === level
-                        ? '1px solid rgba(99,102,241,0.5)'
-                        : '1px solid rgba(255,255,255,0.07)',
+                      border: difficulty === level ? '1px solid rgba(99,102,241,0.5)' : '1px solid rgba(255,255,255,0.07)',
                       background: difficulty === level ? 'rgba(99,102,241,0.12)' : 'transparent',
                       color: difficulty === level ? '#818cf8' : 'rgba(255,255,255,0.4)',
                       fontSize: 13, fontWeight: difficulty === level ? 600 : 400,
-                      cursor: 'pointer', textAlign: 'left',
-                      transition: 'all 0.15s ease',
+                      cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s ease',
                       display: 'flex', alignItems: 'center', gap: 8,
                     }}>
                     <span>{level === 'Beginner' ? '🌱' : level === 'Intermediate' ? '🌿' : '🌳'}</span>
@@ -176,7 +173,7 @@ const PerformancePage = ({ performanceData, backendStats, difficulty, setDifficu
                 Data
               </p>
               <p style={{ margin: '0 0 12px', fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>
-                Clear all local performance data and reset your stats.
+                Clear all performance data and reset your stats.
               </p>
               <button onClick={onReset} disabled={isLoading} className="reset-btn"
                 style={{
@@ -189,7 +186,6 @@ const PerformancePage = ({ performanceData, backendStats, difficulty, setDifficu
                 🗑️ Reset Performance Data
               </button>
             </div>
-
           </div>
         </div>
       </main>

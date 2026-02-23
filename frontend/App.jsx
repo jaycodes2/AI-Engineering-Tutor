@@ -6,8 +6,8 @@ import DashboardPage from './components/DashboardPage.jsx';
 import PerformancePage from './components/PerformancePage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 import { Page, Difficulty, ENGINEERING_TOPICS } from './constants.js';
-import { sendMessageToTutor, generateTitleAndSuggestions, submitQuizAnswer, getUserStats } from './services/geminiService.js';
-import { loadSessions, saveSession, updateSessionMessages, updateSessionTitle, deleteSession, savePerformanceData, loadPerformanceData } from './services/firestoreService.js';
+import { sendMessageToTutor, generateTitleAndSuggestions, submitQuizAnswer } from './services/geminiService.js';
+import { loadSessions, saveSession, updateSessionMessages, updateSessionTitle, deleteSession, savePerformanceData, loadPerformanceData, saveActivityStats, loadActivityStats } from './services/firestoreService.js';
 import { auth, logout } from './services/auth.js';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -15,6 +15,9 @@ const DEFAULT_MESSAGE = {
   role: 'model',
   text: "Hello! I'm Cognite, your AI engineering tutor. Ask me anything to get started, or browse topics for a guided lesson."
 };
+
+const EMPTY_PERF = () =>
+  ENGINEERING_TOPICS.map(topic => ({ name: topic.split(' ')[0], correct: 0, incorrect: 0 }));
 
 const newSessionTemplate = (msg = DEFAULT_MESSAGE) => ({
   id: Date.now().toString(),
@@ -27,10 +30,8 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [currentPage, setCurrentPage] = useState(Page.Login);
   const [difficulty, setDifficulty] = useState(Difficulty.Beginner);
-  const [performanceData, setPerformanceData] = useState(
-    ENGINEERING_TOPICS.map(topic => ({ name: topic.split(' ')[0], correct: 0, incorrect: 0 }))
-  );
-  const [backendStats, setBackendStats] = useState(null);
+  const [performanceData, setPerformanceData] = useState(EMPTY_PERF());
+  const [activityStats, setActivityStats] = useState({ messages_sent: 0, lessons_viewed: 0 });
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'system');
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
@@ -41,13 +42,14 @@ const App = () => {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [suggestedTopics, setSuggestedTopics] = useState([]);
 
-  // Save debounce ref
   const saveTimer = useRef(null);
-  const uidRef = useRef(null); // always holds current Firebase UID
-  const perfDataRef = useRef(performanceData); // always holds latest performance data
+  const uidRef = useRef(null);
+  const perfDataRef = useRef(EMPTY_PERF());
 
-  // Keep perfDataRef in sync
-  useEffect(() => { perfDataRef.current = performanceData; }, [performanceData]);
+  // Keep perfDataRef always in sync with state
+  useEffect(() => {
+    perfDataRef.current = performanceData;
+  }, [performanceData]);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -62,14 +64,16 @@ const App = () => {
   const loadUserSessions = async (uid) => {
     setSessionsLoading(true);
     try {
-      // Load performance data — update both state and ref
       const savedPerf = await loadPerformanceData(uid);
       if (savedPerf && Array.isArray(savedPerf) && savedPerf.length > 0) {
         perfDataRef.current = savedPerf;
         setPerformanceData(savedPerf);
-        console.log('Loaded performance data:', savedPerf.filter(d => d.correct > 0 || d.incorrect > 0));
       }
 
+      const savedActivity = await loadActivityStats(uid);
+      setActivityStats(savedActivity);
+
+      // ── SESSIONS LOAD ──
       const sessions = await loadSessions(uid);
       if (sessions.length > 0) {
         setChatSessions(sessions);
@@ -81,7 +85,7 @@ const App = () => {
         await saveSession(uid, initial);
       }
     } catch (e) {
-      console.warn('Failed to load sessions:', e);
+      console.error('[PERF] Failed to load user data:', e);
       const initial = newSessionTemplate();
       setChatSessions([initial]);
       setActiveSessionId(initial.id);
@@ -94,28 +98,19 @@ const App = () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       updateSessionMessages(uidRef.current, sessionId, messages, title);
-    }, 1000); // Save 1s after last change
-  };
-
-  // ── Analytics ──────────────────────────────────────────────────────────────
-
-  const fetchBackendStats = async () => {
-    try {
-      const stats = await getUserStats();
-      setBackendStats(stats);
-    } catch (e) {
-      console.warn('Could not fetch backend stats:', e.message);
-    }
+    }, 1000);
   };
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
   const handleLogout = async () => {
-    setPerformanceData(ENGINEERING_TOPICS.map(t => ({ name: t.split(' ')[0], correct: 0, incorrect: 0 })));
+    const empty = EMPTY_PERF();
+    perfDataRef.current = empty;
+    setPerformanceData(empty);
+    setActivityStats({ messages_sent: 0, lessons_viewed: 0 });
     const initial = newSessionTemplate();
     setChatSessions([initial]);
     setActiveSessionId(initial.id);
-    setBackendStats(null);
     setUser(null);
     setCurrentPage(Page.Login);
     uidRef.current = null;
@@ -123,7 +118,7 @@ const App = () => {
   };
 
   const handleNavigate = (page) => {
-    if (page === Page.Performance) fetchBackendStats();
+    // Only fetch if we have no stats yet — don't refetch on every visit
     setCurrentPage(page);
   };
 
@@ -132,11 +127,13 @@ const App = () => {
   };
 
   const handleResetPerformance = () => {
-    const fresh = ENGINEERING_TOPICS.map(t => ({ name: t.split(' ')[0], correct: 0, incorrect: 0 }));
-    perfDataRef.current = fresh;         // keep ref in sync
+    const fresh = EMPTY_PERF();
+    perfDataRef.current = fresh;
     setPerformanceData(fresh);
-    setBackendStats(null);
-    savePerformanceData(uidRef.current, fresh);
+    const freshActivity = { messages_sent: 0, lessons_viewed: 0 };
+    setActivityStats(freshActivity);
+    if (uidRef.current) saveActivityStats(uidRef.current, freshActivity);
+    if (uidRef.current) savePerformanceData(uidRef.current, fresh);
   };
 
   // ── Chat handlers ──────────────────────────────────────────────────────────
@@ -148,9 +145,7 @@ const App = () => {
     await saveSession(uidRef.current, newSession);
   };
 
-  const handleSelectSession = (id) => {
-    setActiveSessionId(id);
-  };
+  const handleSelectSession = (id) => setActiveSessionId(id);
 
   const handleDeleteSession = async (sessionId) => {
     await deleteSession(uidRef.current, sessionId);
@@ -182,11 +177,17 @@ const App = () => {
     ));
     setChatInput('');
     setIsChatLoading(true);
+    // Track message sent — capture uid before async call
+    const msgUid = uidRef.current;
+    setActivityStats(prev => {
+      const updated = { ...prev, messages_sent: (prev.messages_sent || 0) + 1 };
+      if (msgUid) saveActivityStats(msgUid, updated);
+      return updated;
+    });
 
     try {
       const historyForAPI = activeSession.messages.map(({ role, text }) => ({ role, parts: [{ text }] }));
 
-      // Add empty streaming message
       setChatSessions(sessions => sessions.map(s =>
         s.id === activeSessionId ? { ...s, messages: [...updatedMessages, { role: 'model', text: '' }] } : s
       ));
@@ -211,14 +212,12 @@ const App = () => {
         s.id === activeSessionId ? { ...s, messages: finalMessages } : s
       ));
 
-      // Generate title on first message, then save to Firestore
       if (isFirstUserMessage && finalMessages.length > 2) {
         generateTitleAndSuggestions(finalMessages).then(({ title, topics }) => {
           setSuggestedTopics(topics);
           setChatSessions(sessions => sessions.map(s =>
             s.id === activeSessionId ? { ...s, title } : s
           ));
-          // Save with new title
           updateSessionMessages(uidRef.current, activeSessionId, finalMessages, title);
           updateSessionTitle(uidRef.current, activeSessionId, title);
         }).catch(() => {
@@ -246,7 +245,7 @@ const App = () => {
   const handleQuizAnswer = async (topic, quiz, selectedIndex, diff) => {
     const uid = uidRef.current;
 
-    // Call Evaluator Agent — get rich feedback
+    // Call Evaluator Agent
     let evaluation = null;
     try {
       evaluation = await submitQuizAnswer({
@@ -257,27 +256,26 @@ const App = () => {
         selected_index: selectedIndex,
         correct_index: quiz.correctAnswerIndex,
       });
-      fetchBackendStats();
     } catch (e) {
       console.warn('Quiz submission failed:', e.message);
     }
 
-    // Fall back to local check if API failed
     const isCorrect = evaluation?.correct ?? (selectedIndex === quiz.correctAnswerIndex);
 
-    // Update performance data synchronously via ref — no race conditions
+    // Update performance — always compute from ref to avoid stale state
     const updated = perfDataRef.current.map(d =>
       d.name === topic.split(' ')[0]
         ? { ...d, [isCorrect ? 'correct' : 'incorrect']: d[isCorrect ? 'correct' : 'incorrect'] + 1 }
         : d
     );
-    perfDataRef.current = updated;       // update ref immediately
-    setPerformanceData(updated);         // update UI
-    savePerformanceData(uid, updated);   // persist to Firestore
+
+    // Update ref first, then state, then save — in this exact order
+    perfDataRef.current = updated;
+    setPerformanceData(updated);
+    await savePerformanceData(uid, updated);
 
     handleUpdateUser({ streak: isCorrect ? (user.streak || 0) + 1 : 0 });
 
-    // Return rich evaluation to FeedbackModal
     return {
       isCorrect,
       explanation: evaluation?.explanation || quiz.explanation,
@@ -303,8 +301,7 @@ const App = () => {
         setCurrentPage(Page.Chat);
         uidRef.current = firebaseUser.uid;
         await loadUserSessions(firebaseUser.uid);
-        fetchBackendStats();
-      } else {
+        } else {
         setUser(null);
         setCurrentPage(Page.Login);
       }
@@ -334,12 +331,22 @@ const App = () => {
       case Page.Dashboard:
         return <DashboardPage
           difficulty={difficulty} setPerformanceData={setPerformanceData}
-          onQuizAnswer={handleQuizAnswer} user={user} onUpdateUser={handleUpdateUser}
+          onQuizAnswer={handleQuizAnswer}
+          onLessonViewed={() => {
+            const lessonUid = uidRef.current;
+            setActivityStats(prev => {
+              const updated = { ...prev, lessons_viewed: (prev.lessons_viewed || 0) + 1 };
+              if (lessonUid) saveActivityStats(lessonUid, updated);
+              return updated;
+            });
+          }}
+          user={user} onUpdateUser={handleUpdateUser}
           suggestedTopics={suggestedTopics} {...chatProps}
         />;
       case Page.Performance:
         return <PerformancePage
-          performanceData={performanceData} backendStats={backendStats}
+          performanceData={performanceData}
+          activityStats={activityStats}
           difficulty={difficulty} setDifficulty={setDifficulty}
           onReset={handleResetPerformance} isLoading={false} theme={theme}
         />;
